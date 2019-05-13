@@ -1,0 +1,26 @@
+[package]
+authors = ["Jorge Aparicio <jorge@japaric.io>"]
+categories = ["embedded", "memory-management", "no-std"]
+description = "A Two Level Segregated Fit (TLSF) allocator optimized for memory-constrained systems"
+edition = "2018"
+license = "MIT OR Apache-2.0"
+name = "tlsf"
+readme = "README.md"
+repository = "https://github.com/japaric/tlsf"
+version = "0.1.0-beta.1"
+
+[dependencies.ufmt]
+optional = true
+version = "0.1.0-beta.4"
+
+[features]
+FLI6 = []
+FLI7 = []
+FLI8 = []
+FLI9 = []
+FLI10 = []
+FLI11 = []
+FLI12 = []
+FLI13 = []
+FLI14 = []
+FLI15 = []
