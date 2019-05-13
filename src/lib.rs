@@ -153,10 +153,17 @@
 //!
 //! Cargo features: `+FLI8`
 //!
-//! |Code          |Time      |
-//! |--------------|----------|
-//! |`Tlsf.alloc`  |`83..=159`|
-//! |`Tlsf.dealloc`|`80..=263`|
+//! |Code            |Time|
+//! |----------------|----|
+//! |`Tlsf.alloc`    |    |
+//! |- no split      |83  |
+//! |- split         |159 |
+//! |- split & pad   |294 |
+//! |`Tlsf.dealloc`  |    |
+//! |- no merge      |80  |
+//! |- merge next    |203 |
+//! |- merge previous|201 |
+//! |- merge both    |263 |
 //!
 //! *All times are in core clock cycles (1 core clock cycle = 125 ns)*
 //!

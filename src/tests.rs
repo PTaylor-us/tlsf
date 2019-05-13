@@ -1,4 +1,4 @@
-use core::{alloc::Layout, mem};
+use core::alloc::Layout;
 
 use crate::{consts, util, Bits, BlockHeader, Tlsf};
 
@@ -43,7 +43,8 @@ fn alloc_reuse() {
 // bigger alignments
 #[test]
 fn alignment() {
-    static mut MEMORY: Aligned<[u8; N]> = Aligned([0; N]);
+    // align to a 32-byte boundary
+    static mut MEMORY: A32<[u8; 2 * N]> = A32([0; 2 * N]);
 
     #[repr(align(8))]
     struct A8(u8);
@@ -52,23 +53,27 @@ fn alignment() {
     struct A16(u8);
 
     #[repr(align(32))]
-    struct A32(u8);
+    struct A32<T>(T);
 
     unsafe {
         let mut tlsf = Tlsf::new();
         tlsf.grow(&mut MEMORY.0);
 
-        let x = tlsf.alloc(Layout::new::<A32>());
+        let layout = Layout::new::<A32<u8>>();
+        // worst-case padding
+        let x = tlsf.alloc(layout);
         assert!(!x.is_null());
-        assert_eq!(x as usize % mem::align_of::<A32>(), 0);
+        assert_eq!(x as usize % layout.align(), 0);
 
-        let y = tlsf.alloc(Layout::new::<A8>());
+        let layout = Layout::new::<A8>();
+        let y = tlsf.alloc(layout);
         assert!(!y.is_null());
-        assert_eq!(y as usize % mem::align_of::<A8>(), 0);
+        assert_eq!(y as usize % layout.align(), 0);
 
-        let z = tlsf.alloc(Layout::new::<A16>());
+        let layout = Layout::new::<A16>();
+        let z = tlsf.alloc(layout);
         assert!(!z.is_null());
-        assert_eq!(z as usize % mem::align_of::<A16>(), 0);
+        assert_eq!(z as usize % layout.align(), 0);
     }
 }
 

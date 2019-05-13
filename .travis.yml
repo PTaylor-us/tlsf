@@ -1,0 +1,53 @@
+language: rust
+
+matrix:
+  include:
+    # MSRV
+    - env: T=x86_64-unknown-linux-gnu FLI=8
+      rust: 1.34.0
+      if: (branch = staging OR branch = trying) OR (type = pull_request AND branch = master)
+
+    # NOTE used to build docs on successful merges to master
+    - env: T=x86_64-unknown-linux-gnu FLI=8
+      # if: (branch = staging OR branch = trying) OR (type = pull_request AND branch = master)
+
+    - env: T=x86_64-unknown-linux-gnu FLI=6
+      if: (branch = staging OR branch = trying) OR (type = pull_request AND branch = master)
+
+    - env: T=x86_64-unknown-linux-gnu FLI=7
+      if: (branch = staging OR branch = trying) OR (type = pull_request AND branch = master)
+
+    - env: T=thumbv6m-none-eabi FLI=8
+      if: (branch = staging OR branch = trying) OR (type = pull_request AND branch = master)
+
+    - env: T=thumbv7m-none-eabi FLI=8
+      if: (branch = staging OR branch = trying) OR (type = pull_request AND branch = master)
+
+before_install:
+  - set -e
+
+install:
+  - bash ci/install.sh
+
+script:
+  - bash ci/script.sh
+
+after_script: set +e
+
+after_success:
+  - bash ci/after-success.sh
+
+cache: cache
+
+before_cache:
+  - chmod -R a+r $HOME/.cargo;
+
+branches:
+  only:
+    - master
+    - staging
+    - trying
+
+notifications:
+  email:
+    on_success: never
