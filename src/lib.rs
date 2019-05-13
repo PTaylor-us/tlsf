@@ -464,9 +464,7 @@ impl Tlsf {
         let size = layout.size();
         let ptr = self.alloc(layout);
         if !ptr.is_null() {
-            // FIXME this is always a byte-wise copy but could be chunked copy because `ptr` and
-            // `new_ptr` are always `K * ALIGN_SIZE`-byte aligned
-            ptr::write_bytes(ptr, 0, size);
+            util::write_bytes(ptr, 0, size);
         }
         ptr
     }
@@ -494,9 +492,7 @@ impl Tlsf {
             let new_layout = Layout::from_size_align_unchecked(new_size, layout.align());
             let new_ptr = self.alloc(new_layout);
             if !new_ptr.is_null() {
-                // FIXME this is always a byte-wise copy but could be chunked copy because `ptr` and
-                // `new_ptr` are always `K * ALIGN_SIZE`-byte aligned
-                ptr::copy_nonoverlapping(ptr, new_ptr, cmp::min(layout.size(), new_size));
+                util::copy_nonoverlapping(ptr, new_ptr, cmp::min(layout.size(), new_size));
                 self.dealloc(ptr);
             }
 
