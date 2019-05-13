@@ -457,7 +457,7 @@ impl Tlsf {
     ///
     /// [0]: https://doc.rust-lang.org/nightly/core/alloc/trait.GlobalAlloc.html?search=#method.alloc_zeroed
     ///
-    /// This method does **not** have a bounded execution time. It may complete in `O(N)` time where
+    /// This method does **not** have a bounded execution time. It completes in `O(N)` time where
     /// `N = layout.size()` due to the requirements of the `GlobalAlloc.alloc_zeroed` API.
     pub unsafe fn alloc_zeroed(&mut self, layout: Layout) -> *mut u8 {
         // this is the default implementation of `core::alloc::GlobalAlloc::alloc_zeroed`
@@ -484,6 +484,7 @@ impl Tlsf {
             FreeBlock::new_unchecked(ptr.offset(-isize::from(BlockHeader::SIZE)) as *mut _)
                 .usable_size();
 
+        // TODO we should try to shrink the allocation if `new_size < layout.size()`
         if usize::from(curr_size) >= new_size {
             // current allocation is big enough
             ptr
