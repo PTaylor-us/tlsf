@@ -25,7 +25,7 @@
 //! // or use the (still) unstable `alloc` crate
 //! use alloc_many_collections::vec::Vec;
 //! // or use the unstable `#[global_allocator]` / `#[alloc_error_handler]` features
-//! use alloc_many::{oom, singleton};
+//! use alloc_many::{oom, Alloc};
 //! use cortex_m::asm;
 //! use cortex_m_rt::entry;
 //! use panic_halt as _; // panic handler
@@ -38,7 +38,7 @@
 //! struct A;
 //!
 //! // or use the `#[alloc_many::allocator]` attribute
-//! unsafe impl singleton::Alloc for A {
+//! unsafe impl Alloc for A {
 //!     unsafe fn alloc(layout: Layout) -> *mut u8 {
 //!         ALLOC.lock().alloc(layout)
 //!     }
@@ -54,6 +54,10 @@
 //!     ) -> *mut u8 {
 //!         ALLOC.lock().realloc(ptr, layout, new_size)
 //!     }
+//!
+//!     unsafe fn alloc_zeroed(layout: Layout) -> *mut u8 {
+//!         ALLOC.lock().alloc_zeroed(layout)
+//!     }
 //! }
 //!
 //! #[repr(align(4))]
@@ -64,7 +68,7 @@
 //!     // NOTE(Aligned) align this buffer to `tlsf::ALIGN_SIZE` bytes to avoid padding
 //!     // NOTE(SIZE) use a size multiple of `MAX_BLOCK_SIZE` to maximize coalescing
 //!     // NOTE(bss) initialize this to all zeros to put `M` in the `.bss` linker
-//!     //            section and close to `tlsf::ANCHOR`
+//!     //           section and close to `tlsf::ANCHOR`
 //!     static mut M: Aligned<[u8; MAX_BLOCK_SIZE as usize]> =
 //!         Aligned([0; MAX_BLOCK_SIZE as usize]);
 //!
@@ -306,9 +310,9 @@ impl Tlsf {
 
     /// Returns a pointer meeting the size and alignment guarantees of `layout`.
     ///
-    /// See [`core::alloc::Alloc.alloc`][0] for more details.
+    /// See [`core::alloc::GlobalAlloc.alloc`][0] for more details.
     ///
-    /// [0]: https://doc.rust-lang.org/nightly/core/alloc/trait.Alloc.html?search=#tymethod.alloc
+    /// [0]: https://doc.rust-lang.org/nightly/core/alloc/trait.GlobalAlloc.html?search=#tymethod.alloc
     ///
     /// This method has a bounded execution time, meaning that it will complete within some time `T`
     /// regardless of the input and the state of the allocator -- the implementation of this method
@@ -423,9 +427,9 @@ impl Tlsf {
 
     /// Deallocate the memory referenced by `ptr`.
     ///
-    /// See [`core::alloc::Alloc.dealloc`][0] for more details
+    /// See [`core::alloc::GlobalAlloc.dealloc`][0] for more details
     ///
-    /// [0]: https://doc.rust-lang.org/nightly/core/alloc/trait.Alloc.html?search=#tymethod.dealloc
+    /// [0]: https://doc.rust-lang.org/nightly/core/alloc/trait.GlobalAlloc.html?search=#tymethod.dealloc
     ///
     /// This method has a bounded execution time, meaning that it will complete within some time `T`
     /// regardless of the input and the state of the allocator -- the implementation of this method
@@ -446,32 +450,50 @@ impl Tlsf {
         self.insert(fb);
     }
 
+    /// Behaves like `alloc`, but also ensures that the contents are set to zero before being
+    /// returned.
+    ///
+    /// See [`core::alloc::GlobalAlloc.alloc_zeroed`][0] for more details
+    ///
+    /// [0]: https://doc.rust-lang.org/nightly/core/alloc/trait.GlobalAlloc.html?search=#method.alloc_zeroed
+    ///
+    /// This method does **not** have a bounded execution time. It completes in `O(N)` time where
+    /// `N = layout.size()` due to the requirements of the `GlobalAlloc.alloc_zeroed` API.
+    pub unsafe fn alloc_zeroed(&mut self, layout: Layout) -> *mut u8 {
+        // this is the default implementation of `core::alloc::GlobalAlloc::alloc_zeroed`
+        let size = layout.size();
+        let ptr = self.alloc(layout);
+        if !ptr.is_null() {
+            util::write_bytes(ptr, 0, size);
+        }
+        ptr
+    }
+
     /// Returns a pointer suitable for holding data described by a new layout with `layout`’s
     /// alignment and a size given by `new_size`. To accomplish this, this may extend or shrink the
     /// allocation referenced by `ptr` to fit the new layout.
     ///
-    /// See [`core::alloc::Alloc.realloc`][0] for more details
+    /// See [`core::alloc::GlobalAlloc.realloc`][0] for more details
     ///
-    /// [0]: https://doc.rust-lang.org/nightly/core/alloc/trait.Alloc.html?search=#method.realloc
+    /// [0]: https://doc.rust-lang.org/nightly/core/alloc/trait.GlobalAlloc.html?search=#method.realloc
     ///
     /// This method does **not** have a bounded execution time. It may complete in `O(N)` time where
-    /// `N = layout.size()` due to the requirements of the `Alloc.realloc` API.
+    /// `N = layout.size()` due to the requirements of the `GlobalAlloc.realloc` API.
     pub unsafe fn realloc(&mut self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
         let curr_size =
             FreeBlock::new_unchecked(ptr.offset(-isize::from(BlockHeader::SIZE)) as *mut _)
                 .usable_size();
 
+        // TODO we should try to shrink the allocation if `new_size < layout.size()`
         if usize::from(curr_size) >= new_size {
             // current allocation is big enough
             ptr
         } else {
-            // this is the default implementation of `core::alloc::Alloc::realloc`
+            // this is the default implementation of `core::alloc::GlobalAlloc::realloc`
             let new_layout = Layout::from_size_align_unchecked(new_size, layout.align());
             let new_ptr = self.alloc(new_layout);
             if !new_ptr.is_null() {
-                // FIXME this is always a byte-wise copy but could be chunked copy because `ptr` and
-                // `new_ptr` are `layout.align()`-byte aligned
-                ptr::copy_nonoverlapping(ptr, new_ptr, cmp::min(layout.size(), new_size));
+                util::copy_nonoverlapping(ptr, new_ptr, cmp::min(layout.size(), new_size));
                 self.dealloc(ptr);
             }
 

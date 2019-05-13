@@ -1,4 +1,5 @@
 use core::{
+    ptr,
     mem,
     ops::{Add, Rem, Sub},
 };
@@ -79,5 +80,40 @@ where
         (x, zero)
     } else {
         (x + (multiple - rem), rem)
+    }
+}
+
+/// `core::ptr::copy_nonoverlapping` but assumes that the input pointers are 4-byte aligned and
+/// that size can be safely rounded up to a multiple of 4
+pub unsafe fn copy_nonoverlapping(src: *const u8, dst: *mut u8, count: usize) {
+    debug_assert_eq!(src as usize % 4, 0);
+    debug_assert_eq!(dst as usize % 4, 0);
+
+    let mut src = src as *const u32;
+    let mut dst = dst as *mut u32;
+
+    // NOTE we don't use `core::ptr::copy_nonoverlapping` here to avoid pulling in
+    // `__aeabi_memcpy4`, which performs a byte-wise copy of the "tail" -- there's no tail in this
+    // function
+    for _ in 0..(round_up(count, 4).0 >> 2) {
+        *dst = *src;
+        src = src.add(1);
+        dst = dst.add(1);
+    }
+}
+
+/// `core::ptr::write_Bytes` but assumes that the input pointer is 4-byte aligned and that size can
+/// be safely rounded up to a multiple of 4
+pub unsafe fn write_bytes(dst: *mut u8, value: u32, count: usize) {
+    debug_assert_eq!(dst as usize % 4, 0);
+
+    // NOTE we don't use `core::ptr::write_bytes` here to avoid pulling in
+    // `__aeabi_memset4`, which performs a byte-wise initialization of the "tail"  -- there's no
+    // tail in this function
+    let mut dst = dst as *mut u32;
+    for _ in 0..(round_up(count, 4).0 >> 2) {
+        // NOTE `write_volatile` is required to prevent pulling in `__aeabi_memset4`
+        ptr::write_volatile(dst, value);
+        dst = dst.add(1);
     }
 }
