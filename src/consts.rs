@@ -72,7 +72,7 @@ pub const MAX_REQUEST_SIZE: u16 = ((1u32 << USER_FLI) - (1 << (USER_FLI - SLI_LO
 pub const ALIGN_SIZE_LOG2: u8 = 2;
 /// All block sizes are multiple of this number; this number is also the minimum alignment of all
 /// allocations
-pub const ALIGN_SIZE: u8 = 1 << 2;
+pub const ALIGN_SIZE: u8 = 1 << ALIGN_SIZE_LOG2;
 
 pub const SLI_LOG2: u8 = 4;
 /// Second Level Index (FLI)
@@ -96,5 +96,5 @@ const ASSERT2: [(); 0 - !(FLI >= 1) as usize] = [];
 /// row
 pub const SIZE_THRESHOLD: u16 = 1 << FLI_SHIFT;
 
-/// If the excess space has at least this many bytes then this block should be split
+/// If the excess space has at least this many *usable* bytes then this block should be split
 pub const SPLIT_THRESHOLD: u16 = 1 * ALIGN_SIZE as u16;

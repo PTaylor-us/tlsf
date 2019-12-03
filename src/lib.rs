@@ -118,10 +118,10 @@
 //! |10 |172            |960               |1,020           |
 //! |11 |206            |1,920             |2,044           |
 //! |12 |240            |3,840             |4,092           |
-//! |13 |274            |7,80              |8,188           |
-//! |14 |308            |15,60             |16,38           |
-//! |15 |342            |30,20             |32,76           |
-//! |16 |376            |61,40             |65,53           |
+//! |13 |274            |7,680             |8,188           |
+//! |14 |308            |15,360            |16,380          |
+//! |15 |342            |30,720            |32,764          |
+//! |16 |376            |61,440            |65,532          |
 //!
 //! *All sizes are in bytes*
 //!
@@ -190,7 +190,7 @@
 #![deny(rust_2018_idioms)]
 #![deny(warnings)]
 
-use core::{alloc::Layout, cmp, convert::TryFrom, fmt, marker::PhantomData, ptr};
+use core::{alloc::Layout, cmp, convert::TryFrom, fmt, marker::PhantomData, ptr::NonNull};
 
 #[cfg(feature = "ufmt")]
 use ufmt::derive::uDebug;
@@ -267,7 +267,7 @@ impl Tlsf {
     ///
     /// To get the most of `memory` use the initialization method shown in the
     /// [example](index.html#example)
-    pub fn grow(&mut self, memory: &'static mut [u8]) -> usize {
+    pub fn extend(&mut self, memory: &'static mut [u8]) -> usize {
         unsafe {
             let ptr = memory.as_mut_ptr();
             let mut len = memory.len();
@@ -310,26 +310,26 @@ impl Tlsf {
 
     /// Returns a pointer meeting the size and alignment guarantees of `layout`.
     ///
-    /// See [`core::alloc::GlobalAlloc.alloc`][0] for more details.
+    /// See [`core::alloc::Alloc.alloc`][0] for more details.
     ///
-    /// [0]: https://doc.rust-lang.org/nightly/core/alloc/trait.GlobalAlloc.html?search=#tymethod.alloc
+    /// [0]: https://doc.rust-lang.org/core/alloc/trait.Alloc.html#tymethod.alloc
     ///
     /// This method has a bounded execution time, meaning that it will complete within some time `T`
     /// regardless of the input and the state of the allocator -- the implementation of this method
     /// contains no loops, recursion or panicking branches.
-    pub unsafe fn alloc(&mut self, layout: Layout) -> *mut u8 {
+    pub unsafe fn alloc(&mut self, layout: Layout) -> Result<NonNull<u8>, ()> {
         let align = layout.align();
         let size = layout.size();
 
         // fast path for zero sized types like `()`
         if size == 0 {
-            return align as *mut u8;
+            return Ok(NonNull::new_unchecked(align as *mut u8));
         }
 
         let align = if let Ok(align) = u16::try_from(align) {
             align
         } else {
-            return ptr::null_mut();
+            return Err(());
         };
 
         // assumptions
@@ -357,7 +357,7 @@ impl Tlsf {
         };
 
         if size > usize::from(consts::MAX_REQUEST_SIZE) {
-            return ptr::null_mut();
+            return Err(());
         }
 
         let size = size as u16;
@@ -367,7 +367,7 @@ impl Tlsf {
             hit
         } else {
             // OOM
-            return ptr::null_mut();
+            return Err(());
         };
 
         // remove head from free list
@@ -404,8 +404,7 @@ impl Tlsf {
             }
         }
 
-        // TLSF is a first-first allocator so let's try to chop off this block into another free
-        // block
+        // let's try to chop off the end of this block into another free block
         let at = size + u16::from(BlockHeader::SIZE);
         if fb.should_split(at) {
             let (left, right) = fb.split(at);
@@ -422,22 +421,25 @@ impl Tlsf {
 
         let block = fb.into_used();
 
-        (block.header() as *mut u8).add(usize::from(BlockHeader::SIZE))
+        Ok(NonNull::new_unchecked(
+            (block.header() as *mut u8).add(usize::from(BlockHeader::SIZE)),
+        ))
     }
 
     /// Deallocate the memory referenced by `ptr`.
     ///
-    /// See [`core::alloc::GlobalAlloc.dealloc`][0] for more details
+    /// See [`core::alloc::Alloc.dealloc`][0] for more details
     ///
-    /// [0]: https://doc.rust-lang.org/nightly/core/alloc/trait.GlobalAlloc.html?search=#tymethod.dealloc
+    /// [0]: https://doc.rust-lang.org/core/alloc/trait.Alloc.html#tymethod.dealloc
     ///
     /// This method has a bounded execution time, meaning that it will complete within some time `T`
     /// regardless of the input and the state of the allocator -- the implementation of this method
     /// contains no loops, recursion or panicking branches.
-    pub unsafe fn dealloc(&mut self, ptr: *mut u8) {
-        let mut fb =
-            Block::new_unchecked(ptr.offset(-isize::from(BlockHeader::SIZE)) as *mut BlockHeader)
-                .into_free();
+    pub unsafe fn dealloc(&mut self, ptr: NonNull<u8>) {
+        let mut fb = Block::new_unchecked(
+            ptr.as_ptr().offset(-isize::from(BlockHeader::SIZE)) as *mut BlockHeader
+        )
+        .into_free();
 
         // unlink
         fb.set_next_free(None);
@@ -450,55 +452,85 @@ impl Tlsf {
         self.insert(fb);
     }
 
-    /// Behaves like `alloc`, but also ensures that the contents are set to zero before being
-    /// returned.
+    /// Attempts to extend the allocation referenced by `ptr` to fit `new_size.`
     ///
-    /// See [`core::alloc::GlobalAlloc.alloc_zeroed`][0] for more details
+    /// See [`core::alloc::Alloc.grow_in_place`][0] for more details
     ///
-    /// [0]: https://doc.rust-lang.org/nightly/core/alloc/trait.GlobalAlloc.html?search=#method.alloc_zeroed
+    /// [0]: https://doc.rust-lang.org/core/alloc/trait.Alloc.html#method.grow_in_place
     ///
-    /// This method does **not** have a bounded execution time. It completes in `O(N)` time where
-    /// `N = layout.size()` due to the requirements of the `GlobalAlloc.alloc_zeroed` API.
-    pub unsafe fn alloc_zeroed(&mut self, layout: Layout) -> *mut u8 {
-        // this is the default implementation of `core::alloc::GlobalAlloc::alloc_zeroed`
-        let size = layout.size();
-        let ptr = self.alloc(layout);
-        if !ptr.is_null() {
-            util::write_bytes(ptr, 0, size);
+    /// This method has a bounded execution time, meaning that it will complete within some time `T`
+    /// regardless of the input and the state of the allocator -- the implementation of this method
+    /// contains no loops, recursion or panicking branches.
+    pub unsafe fn grow_in_place(&mut self, ptr: NonNull<u8>, new_size: usize) -> Result<(), ()> {
+        let actual_size = FreeBlock::new_unchecked(
+            ptr.as_ptr().offset(-isize::from(BlockHeader::SIZE)) as *mut _,
+        )
+        .usable_size();
+
+        if usize::from(actual_size) >= new_size {
+            Ok(())
+        } else {
+            // TODO we should try to merge with the following free block, if there's one
+            Err(())
         }
-        ptr
+    }
+
+    /// Attempts to shrink the allocation referenced by `ptr` to fit `new_size`.
+    ///
+    /// See [`core::alloc::Alloc.shrink_in_place`][0] for more details
+    ///
+    /// [0]: https://doc.rust-lang.org/core/alloc/trait.Alloc.html#method.shrink_in_place
+    ///
+    /// This method has a bounded execution time, meaning that it will complete within some time `T`
+    /// regardless of the input and the state of the allocator -- the implementation of this method
+    /// contains no loops, recursion or panicking branches.
+    pub unsafe fn shrink_in_place(
+        &mut self,
+        _ptr: NonNull<u8>,
+        _new_size: usize,
+    ) -> Result<(), ()> {
+        // TODO we should try to carve off a free block out of the excess space
+        // because we store the size in the block header shrinking a block can be a no-op
+        Ok(())
     }
 
     /// Returns a pointer suitable for holding data described by a new layout with `layout`’s
     /// alignment and a size given by `new_size`. To accomplish this, this may extend or shrink the
     /// allocation referenced by `ptr` to fit the new layout.
     ///
-    /// See [`core::alloc::GlobalAlloc.realloc`][0] for more details
+    /// See [`core::alloc::Alloc.realloc`][0] for more details
     ///
-    /// [0]: https://doc.rust-lang.org/nightly/core/alloc/trait.GlobalAlloc.html?search=#method.realloc
+    /// [0]: https://doc.rust-lang.org/core/alloc/trait.Alloc.html#method.realloc
     ///
     /// This method does **not** have a bounded execution time. It may complete in `O(N)` time where
-    /// `N = layout.size()` due to the requirements of the `GlobalAlloc.realloc` API.
-    pub unsafe fn realloc(&mut self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
-        let curr_size =
-            FreeBlock::new_unchecked(ptr.offset(-isize::from(BlockHeader::SIZE)) as *mut _)
-                .usable_size();
+    /// `N = layout.size()`
+    pub unsafe fn realloc(
+        &mut self,
+        ptr: NonNull<u8>,
+        layout: Layout,
+        new_size: usize,
+    ) -> Result<NonNull<u8>, ()> {
+        let old_size = layout.size();
 
-        // TODO we should try to shrink the allocation if `new_size < layout.size()`
-        if usize::from(curr_size) >= new_size {
-            // current allocation is big enough
-            ptr
-        } else {
-            // this is the default implementation of `core::alloc::GlobalAlloc::realloc`
-            let new_layout = Layout::from_size_align_unchecked(new_size, layout.align());
-            let new_ptr = self.alloc(new_layout);
-            if !new_ptr.is_null() {
-                util::copy_nonoverlapping(ptr, new_ptr, cmp::min(layout.size(), new_size));
-                self.dealloc(ptr);
+        if new_size >= old_size {
+            if self.grow_in_place(ptr, new_size).is_ok() {
+                return Ok(ptr);
             }
-
-            new_ptr
+        } else if new_size < old_size {
+            if self.shrink_in_place(ptr, new_size).is_ok() {
+                return Ok(ptr);
+            }
         }
+
+        // otherwise, fall back on alloc + copy + dealloc.
+        let new_layout = Layout::from_size_align_unchecked(new_size, layout.align());
+        let result = self.alloc(new_layout);
+        if let Ok(new_ptr) = result {
+            // NOTE `util::`, not `ptr::`
+            util::copy_nonoverlapping(ptr.as_ptr(), new_ptr.as_ptr(), cmp::min(old_size, new_size));
+            self.dealloc(ptr);
+        }
+        result
     }
 
     /* Private API */

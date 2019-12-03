@@ -11,7 +11,7 @@ version = "0.1.0-beta.1"
 
 [dependencies.ufmt]
 optional = true
-version = "0.1.0-beta.4"
+version = "0.1.0"
 
 [features]
 FLI6 = []
@@ -24,3 +24,7 @@ FLI12 = []
 FLI13 = []
 FLI14 = []
 FLI15 = []
+
+[profile.release]
+codegen-units = 1
+lto = true

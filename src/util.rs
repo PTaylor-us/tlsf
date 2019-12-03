@@ -1,5 +1,4 @@
 use core::{
-    ptr,
     mem,
     ops::{Add, Rem, Sub},
 };
@@ -102,8 +101,9 @@ pub unsafe fn copy_nonoverlapping(src: *const u8, dst: *mut u8, count: usize) {
     }
 }
 
-/// `core::ptr::write_Bytes` but assumes that the input pointer is 4-byte aligned and that size can
+/// `core::ptr::write_bytes` but assumes that the input pointer is 4-byte aligned and that size can
 /// be safely rounded up to a multiple of 4
+#[cfg(dead_code)]
 pub unsafe fn write_bytes(dst: *mut u8, value: u32, count: usize) {
     debug_assert_eq!(dst as usize % 4, 0);
 
