@@ -13,17 +13,15 @@ fn alloc_reuse() {
 
     unsafe {
         let mut tlsf = Tlsf::new();
-        tlsf.grow(&mut MEMORY.0);
+        tlsf.extend(&mut MEMORY.0);
 
         let layout = Layout::new::<u8>();
 
         // X ~
-        let x = tlsf.alloc(layout);
-        assert!(!x.is_null());
+        let x = tlsf.alloc(layout).unwrap();
 
         // X Y ~
-        let y = tlsf.alloc(layout);
-        assert!(!y.is_null());
+        let _y = tlsf.alloc(layout).unwrap();
 
         // (X) Y ~
         tlsf.dealloc(x);
@@ -32,8 +30,7 @@ fn alloc_reuse() {
 
         // Z Y ~
         // This operation will reclaim the previously freed `x` block
-        let z = tlsf.alloc(layout);
-        assert!(!z.is_null());
+        let z = tlsf.alloc(layout).unwrap();
 
         assert_eq!(tlsf.free_blocks().count(), 1);
         assert_eq!(z, x);
@@ -57,23 +54,20 @@ fn alignment() {
 
     unsafe {
         let mut tlsf = Tlsf::new();
-        tlsf.grow(&mut MEMORY.0);
+        tlsf.extend(&mut MEMORY.0);
 
         let layout = Layout::new::<A32<u8>>();
         // worst-case padding
-        let x = tlsf.alloc(layout);
-        assert!(!x.is_null());
-        assert_eq!(x as usize % layout.align(), 0);
+        let x = tlsf.alloc(layout).unwrap();
+        assert_eq!(x.as_ptr() as usize % layout.align(), 0);
 
         let layout = Layout::new::<A8>();
-        let y = tlsf.alloc(layout);
-        assert!(!y.is_null());
-        assert_eq!(y as usize % layout.align(), 0);
+        let y = tlsf.alloc(layout).unwrap();
+        assert_eq!(y.as_ptr() as usize % layout.align(), 0);
 
         let layout = Layout::new::<A16>();
-        let z = tlsf.alloc(layout);
-        assert!(!z.is_null());
-        assert_eq!(z as usize % layout.align(), 0);
+        let z = tlsf.alloc(layout).unwrap();
+        assert_eq!(z.as_ptr() as usize % layout.align(), 0);
     }
 }
 
@@ -84,27 +78,24 @@ fn align_size() {
 
     unsafe {
         let mut tlsf = Tlsf::new();
-        tlsf.grow(&mut MEMORY.0);
+        tlsf.extend(&mut MEMORY.0);
 
-        let x = tlsf.alloc(Layout::new::<u8>());
-        assert!(!x.is_null());
+        let x = tlsf.alloc(Layout::new::<u8>()).unwrap();
 
-        let y = tlsf.alloc(Layout::new::<u16>());
-        assert!(!y.is_null());
+        let y = tlsf.alloc(Layout::new::<u16>()).unwrap();
 
-        let z = tlsf.alloc(Layout::new::<u32>());
-        assert!(!z.is_null());
+        let z = tlsf.alloc(Layout::new::<u32>()).unwrap();
 
-        assert_eq!(x as usize % usize::from(consts::ALIGN_SIZE), 0);
-        assert_eq!(y as usize % usize::from(consts::ALIGN_SIZE), 0);
-        assert_eq!(z as usize % usize::from(consts::ALIGN_SIZE), 0);
+        assert_eq!(x.as_ptr() as usize % usize::from(consts::ALIGN_SIZE), 0);
+        assert_eq!(y.as_ptr() as usize % usize::from(consts::ALIGN_SIZE), 0);
+        assert_eq!(z.as_ptr() as usize % usize::from(consts::ALIGN_SIZE), 0);
 
         assert_eq!(
-            y as usize - x as usize,
+            y.as_ptr() as usize - x.as_ptr() as usize,
             usize::from(consts::ALIGN_SIZE + BlockHeader::SIZE)
         );
         assert_eq!(
-            z as usize - y as usize,
+            z.as_ptr() as usize - y.as_ptr() as usize,
             usize::from(consts::ALIGN_SIZE + BlockHeader::SIZE)
         );
     }
@@ -127,7 +118,7 @@ fn new() {
 
     unsafe {
         let mut tlsf = Tlsf::new();
-        let size = tlsf.grow(&mut MEMORY.0);
+        let size = tlsf.extend(&mut MEMORY.0);
 
         // There should be a single free block after initialization
         assert_eq!(tlsf.free_blocks().count(), 1);
@@ -146,7 +137,7 @@ fn new_unaligned() {
 
     unsafe {
         let mut tlsf = Tlsf::new();
-        let size = tlsf.grow(&mut MEMORY.0[1..]);
+        let size = tlsf.extend(&mut MEMORY.0[1..]);
 
         // There should be a single free block after initialization
         assert_eq!(tlsf.free_blocks().count(), 1);
@@ -166,29 +157,25 @@ fn merge_both() {
 
     unsafe {
         let mut tlsf = Tlsf::new();
-        tlsf.grow(&mut MEMORY.0);
+        tlsf.extend(&mut MEMORY.0);
         assert_eq!(tlsf.free_blocks().count(), 1);
 
         let layout = Layout::new::<u8>();
 
         // X ~
-        let x = tlsf.alloc(layout);
-        assert!(!x.is_null());
+        let x = tlsf.alloc(layout).unwrap();
         assert_eq!(tlsf.free_blocks().count(), 1);
 
         // X Y ~
-        let y = tlsf.alloc(layout);
-        assert!(!y.is_null());
+        let y = tlsf.alloc(layout).unwrap();
         assert_eq!(tlsf.free_blocks().count(), 1);
 
         // X Y Z ~
-        let z = tlsf.alloc(layout);
-        assert!(!z.is_null());
+        let z = tlsf.alloc(layout).unwrap();
         assert_eq!(tlsf.free_blocks().count(), 1);
 
         // X Y Z W ~
-        let w = tlsf.alloc(layout);
-        assert!(!w.is_null());
+        let _w = tlsf.alloc(layout).unwrap();
         assert_eq!(tlsf.free_blocks().count(), 1);
 
         // (X) Y Z W ~
@@ -212,21 +199,18 @@ fn merge_prev() {
 
     unsafe {
         let mut tlsf = Tlsf::new();
-        tlsf.grow(&mut MEMORY.0);
+        tlsf.extend(&mut MEMORY.0);
 
         let layout = Layout::new::<u8>();
 
         // X ~
-        let x = tlsf.alloc(layout);
-        assert!(!x.is_null());
+        let x = tlsf.alloc(layout).unwrap();
 
         // X Y ~
-        let y = tlsf.alloc(layout);
-        assert!(!y.is_null());
+        let y = tlsf.alloc(layout).unwrap();
 
         // X Y Z ~
-        let z = tlsf.alloc(layout);
-        assert!(!z.is_null());
+        let _z = tlsf.alloc(layout).unwrap();
 
         // (X) Y Z ~
         tlsf.dealloc(x);
@@ -245,21 +229,18 @@ fn merge_next() {
 
     unsafe {
         let mut tlsf = Tlsf::new();
-        tlsf.grow(&mut MEMORY.0);
+        tlsf.extend(&mut MEMORY.0);
 
         let layout = Layout::new::<u8>();
 
         // X ~
-        let x = tlsf.alloc(layout);
-        assert!(!x.is_null());
+        let x = tlsf.alloc(layout).unwrap();
 
         // X Y ~
-        let y = tlsf.alloc(layout);
-        assert!(!y.is_null());
+        let y = tlsf.alloc(layout).unwrap();
 
         // X Y Z ~
-        let z = tlsf.alloc(layout);
-        assert!(!z.is_null());
+        let _z = tlsf.alloc(layout).unwrap();
 
         // X (Y) Z ~
         tlsf.dealloc(y);
@@ -280,7 +261,7 @@ fn oom() {
         let layout = Layout::new::<u8>();
 
         let x = tlsf.alloc(layout);
-        assert!(x.is_null());
+        assert!(x.is_err());
     }
 }
 
@@ -290,7 +271,7 @@ fn two_phys_blocks() {
 
     unsafe {
         let mut tlsf = Tlsf::new();
-        tlsf.grow(&mut MEMORY.0);
+        tlsf.extend(&mut MEMORY.0);
 
         // both free blocks should be marked as `last_phys_block`
         assert_eq!(tlsf.free_blocks().count(), 2);
@@ -299,12 +280,10 @@ fn two_phys_blocks() {
         let layout = Layout::new::<[u8; N / 2]>();
 
         // X ~ | ~
-        let x = tlsf.alloc(layout);
-        assert!(!x.is_null());
+        let _x = tlsf.alloc(layout).unwrap();
 
         // X ~ | Y ~
-        let y = tlsf.alloc(layout);
-        assert!(!y.is_null());
+        let y = tlsf.alloc(layout).unwrap();
 
         // X ~ | (Y) ~
         // deallocating `Y` should not merge blocks that belong to different physical regions
@@ -320,18 +299,17 @@ fn realloc() {
 
     unsafe {
         let mut tlsf = Tlsf::new();
-        tlsf.grow(&mut MEMORY.0);
+        tlsf.extend(&mut MEMORY.0);
 
         let layout = Layout::new::<u8>();
 
-        let x = tlsf.alloc(layout);
-        assert!(!x.is_null());
+        let x = tlsf.alloc(layout).unwrap();
 
         // blocks always have size `>= 4` so these re-allocations should be a no-ops
-        let y = tlsf.realloc(x, layout, 2);
+        let y = tlsf.realloc(x, layout, 2).unwrap();
         assert_eq!(x, y);
 
-        let z = tlsf.realloc(y, layout, 4);
+        let z = tlsf.realloc(y, layout, 4).unwrap();
         assert_eq!(x, z);
     }
 }
