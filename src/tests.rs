@@ -315,6 +315,28 @@ fn realloc() {
 }
 
 #[test]
+fn grow_in_place() {
+    const M: usize = 8;
+    static mut MEMORY: Aligned<[u8; N]> = Aligned([0; N]);
+
+    unsafe {
+        let mut tlsf = Tlsf::new();
+        tlsf.extend(&mut MEMORY.0);
+
+        let layout = Layout::new::<[u8; M]>();
+
+        let x = tlsf.alloc(layout).unwrap();
+        assert_eq!(tlsf.free_blocks().count(), 1);
+        let before = tlsf.free_blocks().next().unwrap().1.size();
+
+        tlsf.grow_in_place(x, 2 * M).unwrap();
+        let after = tlsf.free_blocks().next().unwrap().1.size();
+        assert_eq!(tlsf.free_blocks().count(), 1);
+        assert!(after < before);
+    }
+}
+
+#[test]
 fn maximums() {
     util::mapping_insert_(consts::MAX_BLOCK_SIZE);
     util::mapping_search_(consts::MAX_REQUEST_SIZE);

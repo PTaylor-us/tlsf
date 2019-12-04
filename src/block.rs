@@ -78,6 +78,18 @@ impl BlockHeader {
     pub fn usable_size(&self) -> u16 {
         self.size() - u16::from(Self::SIZE)
     }
+
+    // NOTE(safety) this does not check whether we are the last physical block or not
+    pub unsafe fn next_neighbor(&self) -> Block {
+        debug_assert!(!self.is_last_phys_block());
+
+        Block::new_unchecked((self as *const _ as *const u8).add(usize::from(self.size())) as *mut _)
+    }
+
+    pub fn prev_neighbor(&self) -> Option<Block> {
+        self.prev_phys_block
+            .map(|off| unsafe { Block::from_offset(off) })
+    }
 }
 
 #[repr(transparent)]
@@ -110,6 +122,10 @@ impl Block {
             self.set_free_bit(true);
             FreeBlock::new_unchecked(self.header() as *mut _)
         }
+    }
+
+    pub fn assume_free(self) -> FreeBlock {
+        unsafe { FreeBlock::new_unchecked(self.header() as *mut _) }
     }
 }
 

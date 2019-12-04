@@ -1,4 +1,4 @@
-use core::{convert::TryFrom, fmt, mem, ops};
+use core::{convert::TryFrom, fmt, mem, num::NonZeroI16, ops};
 
 use crate::{
     block::{Block, BlockHeader},
@@ -66,7 +66,8 @@ impl FreeBlock {
     pub unsafe fn from_parts(
         header: *mut FreeBlockHeader,
         size: u16,
-        last_phys_block: bool,
+        is_last_phys_block: bool,
+        prev_phys_block: Option<NonZeroI16>,
     ) -> Self {
         // check size
         debug_assert_eq!(size % u16::from(consts::ALIGN_SIZE), 0);
@@ -75,8 +76,8 @@ impl FreeBlock {
         let mut fb = FreeBlock::new_unchecked(header);
         fb.set_size(size);
         fb.set_free_bit(true);
-        fb.set_last_phys_block_bit(last_phys_block);
-        fb.set_prev_phys_block(None);
+        fb.set_last_phys_block_bit(is_last_phys_block);
+        fb.set_prev_phys_block(prev_phys_block);
         fb.set_next_free(None);
         fb.set_prev_free(None);
 
@@ -125,10 +126,12 @@ impl FreeBlock {
 
         // create the right ("remainder") block
         let start = (left.header as *mut u8).add(usize::from(n));
-        let mut right = FreeBlock::from_parts(start as *mut _, total - n, last_phys_block);
-        right.set_prev_phys_block(Some(left.offset()));
-        right.set_next_free(None);
-        right.set_prev_free(None);
+        let right = FreeBlock::from_parts(
+            start as *mut _,
+            total - n,
+            last_phys_block,
+            Some(left.offset()),
+        );
 
         // update the original free block
         if last_phys_block {
