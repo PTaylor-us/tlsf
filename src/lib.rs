@@ -229,10 +229,13 @@ pub struct Anchor(u8);
 #[link_section = ".bss.TLSF_ANCHOR"]
 pub static ANCHOR: Anchor = Anchor(0);
 
-fn anchor() -> *mut u8 {
-    let anchor = &ANCHOR as *const Anchor as *mut u8;
-    debug_assert_eq!(anchor as usize % usize::from(consts::ALIGN_SIZE), 0);
-    anchor
+fn anchor() -> NonNull<u8> {
+    let anchor = NonNull::from(&ANCHOR);
+    debug_assert_eq!(
+        anchor.as_ptr() as usize % usize::from(consts::ALIGN_SIZE),
+        0
+    );
+    anchor.cast()
 }
 
 impl Tlsf {
@@ -272,7 +275,7 @@ impl Tlsf {
             let ptr = memory.as_mut_ptr();
             let mut len = memory.len();
 
-            let anchor = anchor() as isize;
+            let anchor = anchor().as_ptr() as isize;
             if ((ptr as isize).wrapping_sub(anchor))
                 < (isize::from(i16::min_value()) << consts::ALIGN_SIZE)
                 || ((ptr.add(len) as isize).wrapping_sub(anchor))
@@ -289,14 +292,15 @@ impl Tlsf {
 
             let mut ptr = ptr as *mut u8;
             let mut total = 0;
-            while len >= usize::from(BlockHeader::SIZE + consts::ALIGN_SIZE) {
+            while len >= usize::from(u16::from(BlockHeader::SIZE) + consts::SPLIT_THRESHOLD) {
                 let size = if len > usize::from(MAX_BLOCK_SIZE) + usize::from(BlockHeader::SIZE) {
                     consts::MAX_BLOCK_SIZE + u16::from(BlockHeader::SIZE)
                 } else {
                     util::round_down(len, usize::from(consts::ALIGN_SIZE)) as u16
                 };
 
-                let fb = FreeBlock::from_parts(ptr as *mut _, size, true, None);
+                let fb =
+                    FreeBlock::from_parts(NonNull::new_unchecked(ptr).cast(), size, true, None);
                 total += usize::from(fb.usable_size());
                 self.add_to_free_list(fb);
 
@@ -379,8 +383,8 @@ impl Tlsf {
 
         // create a padding block, if necessary
         if align > u16::from(consts::ALIGN_SIZE) {
-            let rem = ((fb.header() as usize + usize::from(BlockHeader::SIZE)) % usize::from(align))
-                as u16;
+            let rem = ((fb.header().as_ptr() as usize + usize::from(BlockHeader::SIZE))
+                % usize::from(align)) as u16;
 
             if rem != 0 {
                 let mut padding = align - rem;
@@ -422,7 +426,11 @@ impl Tlsf {
         let block = fb.into_used();
 
         Ok(NonNull::new_unchecked(
-            (block.header() as *mut u8).add(usize::from(BlockHeader::SIZE)),
+            block
+                .header()
+                .as_ptr()
+                .cast::<u8>()
+                .add(usize::from(BlockHeader::SIZE)),
         ))
     }
 
@@ -436,7 +444,8 @@ impl Tlsf {
     /// regardless of the input and the state of the allocator -- the implementation of this method
     /// contains no loops, recursion or panicking branches.
     pub unsafe fn dealloc(&mut self, ptr: NonNull<u8>) {
-        let mut fb = Block::from_data_pointer(ptr.as_ptr()).into_free();
+        // set the FREE bit
+        let mut fb = Block::from_data_pointer(ptr).into_free();
 
         // unlink
         fb.set_next_free(None);
@@ -459,7 +468,7 @@ impl Tlsf {
     /// regardless of the input and the state of the allocator -- the implementation of this method
     /// contains no loops, recursion or panicking branches.
     pub unsafe fn grow_in_place(&mut self, ptr: NonNull<u8>, new_size: usize) -> Result<(), ()> {
-        let block = Block::from_data_pointer(ptr.as_ptr());
+        let block = Block::from_data_pointer(ptr);
         let offset = block.offset();
         let usable_size = block.usable_size();
 
@@ -478,7 +487,14 @@ impl Tlsf {
                 let mut neighbor = neighbor.assume_free();
                 self.remove_from_free_list(&mut neighbor);
 
-                let header = (neighbor.header() as *mut u8).add(usize::from(delta)) as *mut _;
+                let header = NonNull::new_unchecked(
+                    neighbor
+                        .header()
+                        .cast::<u8>()
+                        .as_ptr()
+                        .add(usize::from(delta))
+                        .cast(),
+                );
                 let new_block =
                     FreeBlock::from_parts(header, size - delta, is_last_phys_block, Some(offset));
 
@@ -502,7 +518,7 @@ impl Tlsf {
     /// contains no loops, recursion or panicking branches.
     pub unsafe fn shrink_in_place(&mut self, ptr: NonNull<u8>, new_size: usize) {
         let new_size = new_size as u16;
-        let block = Block::from_data_pointer(ptr.as_ptr());
+        let block = Block::from_data_pointer(ptr);
         let usable_size = block.usable_size();
         let delta = usable_size - new_size;
 
@@ -554,7 +570,7 @@ impl Tlsf {
     }
 
     /* Private API */
-    fn add_to_free_list(&mut self, mut block: FreeBlock) {
+    fn add_to_free_list(&mut self, mut block: FreeBlock<'_>) {
         unsafe {
             let i = util::mapping_insert(block.usable_size());
 
@@ -571,7 +587,7 @@ impl Tlsf {
         }
     }
 
-    fn try_merge_next(&mut self, mut unlinked: FreeBlock) -> FreeBlock {
+    fn try_merge_next<'a>(&mut self, mut unlinked: FreeBlock<'a>) -> FreeBlock<'a> {
         unsafe {
             debug_assert!(unlinked.next_free().is_none());
             debug_assert!(unlinked.prev_free().is_none());
@@ -583,7 +599,7 @@ impl Tlsf {
                 let next = unlinked.next_neighbor();
 
                 if next.is_free() {
-                    let mut next = FreeBlock::new_unchecked(next.header() as *mut _);
+                    let mut next = next.assume_free();
 
                     // unlink the next block
                     self.remove_from_free_list(&mut next);
@@ -605,7 +621,7 @@ impl Tlsf {
         }
     }
 
-    fn try_merge_prev(&mut self, unlinked: FreeBlock) -> FreeBlock {
+    fn try_merge_prev<'a>(&mut self, unlinked: FreeBlock<'a>) -> FreeBlock<'a> {
         unsafe {
             debug_assert!(unlinked.next_free().is_none());
             debug_assert!(unlinked.prev_free().is_none());
@@ -613,7 +629,7 @@ impl Tlsf {
             if let Some(prev) = unlinked.prev_neighbor() {
                 if prev.is_free() {
                     // merge them!
-                    let mut prev = FreeBlock::new_unchecked(prev.header() as *mut _);
+                    let mut prev = prev.assume_free();
 
                     self.remove_from_free_list(&mut prev);
 
@@ -662,7 +678,7 @@ impl Tlsf {
     }
 
     /// Remove this block from the free list
-    unsafe fn remove_from_free_list(&mut self, block: &mut FreeBlock) {
+    unsafe fn remove_from_free_list<'a>(&mut self, block: &mut FreeBlock<'a>) {
         let next = block.next_free();
         let prev = block.prev_free();
 
@@ -689,7 +705,7 @@ impl Tlsf {
         }
     }
 
-    unsafe fn remove_head(&mut self, i: Index) -> FreeBlock {
+    unsafe fn remove_head<'a>(&mut self, i: Index) -> FreeBlock<'a> {
         let fl = self.free_list_head(i);
 
         let mut head = FreeBlock::from_offset(fl.unwrap_or_else(|| assume_unreachable!()));
@@ -768,7 +784,7 @@ impl Tlsf {
     }
 
     #[cfg(test)]
-    fn free_blocks<'a>(&'a self) -> impl Iterator<Item = (Index, FreeBlock)> + 'a {
+    fn free_blocks<'a>(&'a self) -> impl Iterator<Item = (Index, FreeBlock<'a>)> + 'a {
         self.indices().flat_map(move |i| {
             let head = unsafe { self.free_list_head(i) };
 
@@ -811,9 +827,9 @@ struct FreeListIterator<'a> {
 }
 
 impl<'a> Iterator for FreeListIterator<'a> {
-    type Item = FreeBlock;
+    type Item = FreeBlock<'a>;
 
-    fn next(&mut self) -> Option<FreeBlock> {
+    fn next(&mut self) -> Option<FreeBlock<'a>> {
         if let Some(head) = self.head {
             let fb = unsafe { FreeBlock::from_offset(head) };
             self.head = fb.next_free();
@@ -824,15 +840,8 @@ impl<'a> Iterator for FreeListIterator<'a> {
     }
 }
 
-#[cfg(feature = "ufmt")]
-#[derive(Clone, Copy, Debug, uDebug)]
-pub(crate) struct Index {
-    fl: u8,
-    sl: u8,
-}
-
-#[cfg(not(feature = "ufmt"))]
 #[derive(Clone, Copy, Debug)]
+#[cfg_attr(feature = "ufmt", derive(uDebug))]
 pub(crate) struct Index {
     fl: u8,
     sl: u8,
