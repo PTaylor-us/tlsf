@@ -1,0 +1,177 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="API documentation for the Rust `tlsf` crate."><meta name="keywords" content="rust, rustlang, rust-lang, tlsf"><title>tlsf - Rust</title><link rel="stylesheet" type="text/css" href="../normalize.css"><link rel="stylesheet" type="text/css" href="../rustdoc.css" id="mainThemeStyle"><link rel="stylesheet" type="text/css" href="../dark.css"><link rel="stylesheet" type="text/css" href="../light.css" id="themeStyle"><script src="../storage.js"></script><noscript><link rel="stylesheet" href="../noscript.css"></noscript><link rel="shortcut icon" href="../favicon.ico"><style type="text/css">#crate-search{background-image:url("../down-arrow.svg");}</style></head><body class="rustdoc mod"><!--[if lte IE 8]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="sidebar"><div class="sidebar-menu">&#9776;</div><a href='../tlsf/index.html'><div class='logo-container'><img src='../rust-logo.png' alt='logo'></div></a><p class='location'>Crate tlsf</p><div class="sidebar-elems"><a id='all-types' href='all.html'><p>See all tlsf's items</p></a><div class="block items"><ul><li><a href="#structs">Structs</a></li><li><a href="#constants">Constants</a></li><li><a href="#statics">Statics</a></li></ul></div><p class='location'></p><script>window.sidebarCurrent = {name: 'tlsf', ty: 'mod', relpath: '../'};</script></div></nav><div class="theme-picker"><button id="theme-picker" aria-label="Pick another theme!"><img src="../brush.svg" width="18" alt="Pick another theme!"></button><div id="theme-choices"></div></div><script src="../theme.js"></script><nav class="sub"><form class="search-form js-only"><div class="search-container"><div><select id="crate-search"><option value="All crates">All crates</option></select><input class="search-input" name="search" autocomplete="off" spellcheck="false" placeholder="Click or press ‘S’ to search, ‘?’ for more options…" type="search"></div><a id="settings-menu" href="../settings.html"><img src="../wheel.svg" width="18" alt="Change settings"></a></div></form></nav><section id="main" class="content"><h1 class='fqn'><span class='out-of-band'><span id='render-detail'><a id="toggle-all-docs" href="javascript:void(0)" title="collapse all docs">[<span class='inner'>&#x2212;</span>]</a></span><a class='srclink' href='../src/tlsf/lib.rs.html#1-944' title='goto source code'>[src]</a></span><span class='in-band'>Crate <a class="mod" href=''>tlsf</a></span></h1><div class='docblock'><p>A Two Level Segregated Fit (TLSF) allocator optimized for memory-constrained systems</p>
+<h1 id="features" class="section-header"><a href="#features">Features</a></h1>
+<ul>
+<li>
+<p>Bounded execution time for the <code>alloc</code> and <code>dealloc</code> operations (WCET analysis friendly)</p>
+</li>
+<li>
+<p>Optimized memory footprint (<em>fixed</em> cost)</p>
+</li>
+<li>
+<p>Only 4 bytes of metadata (overhead) per allocation (<em>variable</em> cost)</p>
+</li>
+<li>
+<p>The &quot;size&quot; of the allocator can be configured at compile time (pay for what you use)</p>
+</li>
+</ul>
+<h1 id="example" class="section-header"><a href="#example">Example</a></h1>
+<div class='information'><div class='tooltip ignore'>ⓘ<span class='tooltiptext'>This example is not tested</span></div></div><div class="example-wrap"><pre class="rust rust-example-rendered ignore">
+<span class="attribute">#![<span class="ident">no_main</span>]</span>
+<span class="attribute">#![<span class="ident">no_std</span>]</span>
+
+<span class="kw">use</span> <span class="ident">core</span>::{
+    <span class="ident">alloc</span>::<span class="ident">Layout</span>,
+    <span class="ident">sync</span>::<span class="ident">atomic</span>::{<span class="ident">AtomicUsize</span>, <span class="ident">Ordering</span>},
+};
+
+<span class="comment">// see https://github.com/japaric/alloc-many</span>
+<span class="comment">// or use the (still) unstable `alloc` crate</span>
+<span class="kw">use</span> <span class="ident">alloc_many_collections</span>::<span class="ident">vec</span>::<span class="ident">Vec</span>;
+<span class="comment">// or use the unstable `#[global_allocator]` / `#[alloc_error_handler]` features</span>
+<span class="kw">use</span> <span class="ident">alloc_many</span>::{<span class="ident">oom</span>, <span class="ident">Alloc</span>};
+<span class="kw">use</span> <span class="ident">cortex_m</span>::<span class="ident">asm</span>;
+<span class="kw">use</span> <span class="ident">cortex_m_rt</span>::<span class="ident">entry</span>;
+<span class="kw">use</span> <span class="ident">panic_halt</span> <span class="kw">as</span> <span class="kw">_</span>; <span class="comment">// panic handler</span>
+<span class="kw">use</span> <span class="ident">spin</span>::<span class="ident">Mutex</span>; <span class="comment">// don&#39;t use this in interrupts because it can deadlock</span>
+<span class="kw">use</span> <span class="ident">tlsf</span>::{<span class="ident">Tlsf</span>, <span class="ident">MAX_BLOCK_SIZE</span>};
+
+<span class="kw">static</span> <span class="ident">ALLOC</span>: <span class="ident">Mutex</span><span class="op">&lt;</span><span class="ident">Tlsf</span><span class="op">&gt;</span> <span class="op">=</span> <span class="ident">Mutex</span>::<span class="ident">new</span>(<span class="ident">Tlsf</span>::<span class="ident">new</span>());
+
+<span class="comment">// An allocator singleton</span>
+<span class="kw">struct</span> <span class="ident">A</span>;
+
+<span class="comment">// or use the `#[alloc_many::allocator]` attribute</span>
+<span class="kw">unsafe</span> <span class="kw">impl</span> <span class="ident">Alloc</span> <span class="kw">for</span> <span class="ident">A</span> {
+    <span class="kw">unsafe</span> <span class="kw">fn</span> <span class="ident">alloc</span>(<span class="ident">layout</span>: <span class="ident">Layout</span>) <span class="op">-</span><span class="op">&gt;</span> <span class="kw-2">*</span><span class="kw-2">mut</span> <span class="ident">u8</span> {
+        <span class="ident">ALLOC</span>.<span class="ident">lock</span>().<span class="ident">alloc</span>(<span class="ident">layout</span>)
+    }
+
+    <span class="kw">unsafe</span> <span class="kw">fn</span> <span class="ident">dealloc</span>(<span class="ident">ptr</span>: <span class="kw-2">*</span><span class="kw-2">mut</span> <span class="ident">u8</span>, <span class="kw">_</span>: <span class="ident">Layout</span>) {
+        <span class="ident">ALLOC</span>.<span class="ident">lock</span>().<span class="ident">dealloc</span>(<span class="ident">ptr</span>)
+    }
+
+    <span class="kw">unsafe</span> <span class="kw">fn</span> <span class="ident">realloc</span>(
+        <span class="ident">ptr</span>: <span class="kw-2">*</span><span class="kw-2">mut</span> <span class="ident">u8</span>,
+        <span class="ident">layout</span>: <span class="ident">Layout</span>,
+        <span class="ident">new_size</span>: <span class="ident">usize</span>,
+    ) <span class="op">-</span><span class="op">&gt;</span> <span class="kw-2">*</span><span class="kw-2">mut</span> <span class="ident">u8</span> {
+        <span class="ident">ALLOC</span>.<span class="ident">lock</span>().<span class="ident">realloc</span>(<span class="ident">ptr</span>, <span class="ident">layout</span>, <span class="ident">new_size</span>)
+    }
+
+    <span class="kw">unsafe</span> <span class="kw">fn</span> <span class="ident">alloc_zeroed</span>(<span class="ident">layout</span>: <span class="ident">Layout</span>) <span class="op">-</span><span class="op">&gt;</span> <span class="kw-2">*</span><span class="kw-2">mut</span> <span class="ident">u8</span> {
+        <span class="ident">ALLOC</span>.<span class="ident">lock</span>().<span class="ident">alloc_zeroed</span>(<span class="ident">layout</span>)
+    }
+}
+
+<span class="attribute">#[<span class="ident">repr</span>(<span class="ident">align</span>(<span class="number">4</span>))]</span>
+<span class="kw">struct</span> <span class="ident">Aligned</span><span class="op">&lt;</span><span class="ident">T</span><span class="op">&gt;</span>(<span class="ident">T</span>);
+
+<span class="attribute">#[<span class="ident">entry</span>]</span>
+<span class="kw">fn</span> <span class="ident">main</span>() <span class="op">-</span><span class="op">&gt;</span> <span class="op">!</span> {
+    <span class="comment">// NOTE(Aligned) align this buffer to `tlsf::ALIGN_SIZE` bytes to avoid padding</span>
+    <span class="comment">// NOTE(SIZE) use a size multiple of `MAX_BLOCK_SIZE` to maximize coalescing</span>
+    <span class="comment">// NOTE(bss) initialize this to all zeros to put `M` in the `.bss` linker</span>
+    <span class="comment">//           section and close to `tlsf::ANCHOR`</span>
+    <span class="kw">static</span> <span class="kw-2">mut</span> <span class="ident">M</span>: <span class="ident">Aligned</span><span class="op">&lt;</span>[<span class="ident">u8</span>; <span class="ident">MAX_BLOCK_SIZE</span> <span class="kw">as</span> <span class="ident">usize</span>]<span class="op">&gt;</span> <span class="op">=</span>
+        <span class="ident">Aligned</span>([<span class="number">0</span>; <span class="ident">MAX_BLOCK_SIZE</span> <span class="kw">as</span> <span class="ident">usize</span>]);
+
+    <span class="ident">ALLOC</span>.<span class="ident">lock</span>().<span class="ident">grow</span>(<span class="kw-2">&amp;</span><span class="kw-2">mut</span> <span class="ident">M</span>.<span class="number">0</span>);
+
+    <span class="comment">// allocate a vector in allocator `A`</span>
+    <span class="kw">let</span> <span class="kw-2">mut</span> <span class="ident">xs</span>: <span class="ident">Vec</span><span class="op">&lt;</span><span class="ident">A</span>, <span class="kw">_</span><span class="op">&gt;</span> <span class="op">=</span> <span class="ident">Vec</span>::<span class="ident">new</span>();
+    <span class="kw">loop</span> {
+        <span class="comment">// push until we run out of memory (see `oom` function below)</span>
+        <span class="ident">xs</span>.<span class="ident">push</span>(<span class="ident">X</span>.<span class="ident">fetch_add</span>(<span class="number">1</span>, <span class="ident">Ordering</span>::<span class="ident">Relaxed</span>) <span class="kw">as</span> <span class="ident">u8</span>);
+    }
+}
+
+<span class="kw">static</span> <span class="ident">X</span>: <span class="ident">AtomicUsize</span> <span class="op">=</span> <span class="ident">AtomicUsize</span>::<span class="ident">new</span>(<span class="number">0</span>);
+
+<span class="attribute">#[<span class="ident">oom</span>]</span> <span class="comment">// instead of the unstable `#[alloc_error_handler]`</span>
+<span class="kw">fn</span> <span class="ident">oom</span>(<span class="kw">_</span>: <span class="ident">Layout</span>) <span class="op">-</span><span class="op">&gt;</span> <span class="op">!</span> {
+    <span class="comment">// check `X` at this point</span>
+    <span class="ident">asm</span>::<span class="ident">bkpt</span>();
+
+    <span class="kw">loop</span> {}
+}</pre></div>
+<h1 id="cargo-features" class="section-header"><a href="#cargo-features">Cargo features</a></h1>
+<p>The TLSF allocator has two main parameters associated to it: the First Level Index (FLI) and the
+Second Level Index (SLI). In a nutshell: the SLI has an effect on fragmentation and the FLI
+controls how big the memory blocks managed by the allocator can get.  See <a href="http://wks.gii.upv.es/tlsf/files/ecrts04_tlsf_0.pdf">2</a> for the full
+details.</p>
+<p>The greater the value of the SLI the lesser the fragmentation. This crate hard codes the value
+of SLI to the recommended value of <code>4</code>.</p>
+<p>The bigger the value of FLI the bigger the memory blocks you can request from the allocator.
+However, increasing the FLI also increases the memory footprint of the allocator. This crate
+lets you pick the the value of FLI through Cargo features named: <code>FLI6</code>, <code>FLI7</code>, ..., <code>FLI16</code>.
+The table below shows the footprint of <code>Tlsf</code> and the maximum block size you can request from it
+for every supported value of <code>FLI</code>.</p>
+<table><thead><tr><th>FLI</th><th><code>size_of(Tlsf)</code></th><th><code>MAX_REQUEST_SIZE</code></th><th><code>MAX_BLOCK_SIZE</code></th></tr></thead><tbody>
+<tr><td>6</td><td>36</td><td>60</td><td>60</td></tr>
+<tr><td>7</td><td>70</td><td>120</td><td>124</td></tr>
+<tr><td>8</td><td>104</td><td>240</td><td>252</td></tr>
+<tr><td>9</td><td>138</td><td>480</td><td>508</td></tr>
+<tr><td>10</td><td>172</td><td>960</td><td>1,020</td></tr>
+<tr><td>11</td><td>206</td><td>1,920</td><td>2,044</td></tr>
+<tr><td>12</td><td>240</td><td>3,840</td><td>4,092</td></tr>
+<tr><td>13</td><td>274</td><td>7,680</td><td>8,188</td></tr>
+<tr><td>14</td><td>308</td><td>15,360</td><td>16,380</td></tr>
+<tr><td>15</td><td>342</td><td>30,720</td><td>32,764</td></tr>
+<tr><td>16</td><td>376</td><td>61,440</td><td>65,532</td></tr>
+</tbody></table>
+<p><em>All sizes are in bytes</em></p>
+<p><code>MAX_REQUEST_SIZE</code> is the maximum block size with alignment of <code>ALIGN_SIZE</code> bytes (or less) that
+can be requested from the allocator. Requesting a bigger size will immediately result in OOM. If
+you request a block with alignment greater than <code>ALIGN_SIZE</code> bytes then <code>MAX_REQUEST_SIZE</code> will
+effectively be lower because the allocator may need to insert padding to satisfy the alignment
+requirement.</p>
+<p><code>MAX_BLOCK_SIZE</code> is the maximum size of any individual memory block managed by the allocator.
+This number is <strong>not</strong> the maximum amount of memory the allocator can manage but you should
+consider it when you use <a href="struct.Tlsf.html#method.grow"><code>Tlsf.grow</code></a> because the allocator will split the given slice into
+blocks of <code>MAX_BLOCK_SIZE</code> bytes if it's too big. These initial blocks -- they are more like
+regions -- will never be coalesced by the allocator; also, the allocator will <em>not</em> coalesce
+blocks from different regions even if they are next to each other.</p>
+<h1 id="limitations" class="section-header"><a href="#limitations">Limitations</a></h1>
+<p>To minimize the memory footprint of the allocator this implementation internally uses 16-bit
+<em>offsets</em> instead of pointers (halves memory footprint on a 32-bit machine). These offsets are
+computed from the address of the <code>tlsf::ANCHOR</code> variable. This decision limits the <em>location</em> of
+the memory blocks that the allocator can manage to those whose address are within <code>±(1 &lt;&lt; 17)</code>
+bytes (±128 KiBi) of the <code>tlsf::ANCHOR</code> variable, will be located in the output <code>.bss</code> linker
+section.</p>
+<h1 id="benchmarks" class="section-header"><a href="#benchmarks">Benchmarks</a></h1>
+<p>Platform: ARM Cortex-M3 @ 8 MHz (zero Flash wait cycles).</p>
+<p>Compilation flags: <code>opt-level=3</code>, <code>lto=true</code>, <code>codegen-units=1</code></p>
+<p>Cargo features: <code>+FLI8</code></p>
+<table><thead><tr><th>Code</th><th>Time</th></tr></thead><tbody>
+<tr><td><code>Tlsf.alloc</code></td><td></td></tr>
+<tr><td>- no split</td><td>83</td></tr>
+<tr><td>- split</td><td>159</td></tr>
+<tr><td>- split &amp; pad</td><td>294</td></tr>
+<tr><td><code>Tlsf.dealloc</code></td><td></td></tr>
+<tr><td>- no merge</td><td>80</td></tr>
+<tr><td>- merge next</td><td>203</td></tr>
+<tr><td>- merge previous</td><td>201</td></tr>
+<tr><td>- merge both</td><td>263</td></tr>
+</tbody></table>
+<p><em>All times are in core clock cycles (1 core clock cycle = 125 ns)</em></p>
+<h1 id="minimum-supported-rust-version-msrv" class="section-header"><a href="#minimum-supported-rust-version-msrv">Minimum Supported Rust Version (MSRV)</a></h1>
+<p>This crate is guaranteed to compile on stable Rust 1.34 and up. It <em>might</em> compile on older
+versions but that may change in any new patch release.</p>
+<h1 id="references" class="section-header"><a href="#references">References</a></h1>
+<ol>
+<li><a href="http://www.gii.upv.es/tlsf/files/spe_2008.pdf">Implementation of a constant-time dynamic storage allocator</a></li>
+<li><a href="http://wks.gii.upv.es/tlsf/files/ecrts04_tlsf_0.pdf">TLSF: a New Dynamic Memory Allocator for Real-Time Systems</a></li>
+</ol>
+</div><h2 id='structs' class='section-header'><a href="#structs">Structs</a></h2>
+<table><tr class='module-item'><td><a class="struct" href="struct.Anchor.html" title='tlsf::Anchor struct'>Anchor</a></td><td class='docblock-short'><p>A 1-byte struct that's <code>ALIGN_SIZE</code>-bytes aligned</p>
+</td></tr><tr class='module-item'><td><a class="struct" href="struct.Tlsf.html" title='tlsf::Tlsf struct'>Tlsf</a></td><td class='docblock-short'><p>The Two Level Segregated Fit (TLSF) allocator</p>
+</td></tr></table><h2 id='constants' class='section-header'><a href="#constants">Constants</a></h2>
+<table><tr class='module-item'><td><a class="constant" href="constant.ALIGN_SIZE.html" title='tlsf::ALIGN_SIZE constant'>ALIGN_SIZE</a></td><td class='docblock-short'><p>All block sizes are multiple of this number; this number is also the minimum alignment of all
+allocations</p>
+</td></tr><tr class='module-item'><td><a class="constant" href="constant.FLI.html" title='tlsf::FLI constant'>FLI</a></td><td class='docblock-short'><p>First Level Index (FLI)</p>
+</td></tr><tr class='module-item'><td><a class="constant" href="constant.MAX_BLOCK_SIZE.html" title='tlsf::MAX_BLOCK_SIZE constant'>MAX_BLOCK_SIZE</a></td><td class='docblock-short'><p>Maximum block size that can be managed by the allocator</p>
+</td></tr><tr class='module-item'><td><a class="constant" href="constant.MAX_REQUEST_SIZE.html" title='tlsf::MAX_REQUEST_SIZE constant'>MAX_REQUEST_SIZE</a></td><td class='docblock-short'><p>Maximum block size that can be requested from the allocator</p>
+</td></tr><tr class='module-item'><td><a class="constant" href="constant.SLI.html" title='tlsf::SLI constant'>SLI</a></td><td class='docblock-short'><p>Second Level Index (FLI)</p>
+</td></tr></table><h2 id='statics' class='section-header'><a href="#statics">Statics</a></h2>
+<table><tr class='module-item'><td><a class="static" href="static.ANCHOR.html" title='tlsf::ANCHOR static'>ANCHOR</a></td><td class='docblock-short'><p>All internal <em>offsets</em> are relative to this &quot;anchor&quot;</p>
+</td></tr></table></section><section id="search" class="content hidden"></section><section class="footer"></section><aside id="help" class="hidden"><div><h1 class="hidden">Help</h1><div class="shortcuts"><h2>Keyboard Shortcuts</h2><dl><dt><kbd>?</kbd></dt><dd>Show this help dialog</dd><dt><kbd>S</kbd></dt><dd>Focus the search field</dd><dt><kbd>↑</kbd></dt><dd>Move up in search results</dd><dt><kbd>↓</kbd></dt><dd>Move down in search results</dd><dt><kbd>↹</kbd></dt><dd>Switch tab</dd><dt><kbd>&#9166;</kbd></dt><dd>Go to active search result</dd><dt><kbd>+</kbd></dt><dd>Expand all sections</dd><dt><kbd>-</kbd></dt><dd>Collapse all sections</dd></dl></div><div class="infos"><h2>Search Tricks</h2><p>Prefix searches with a type followed by a colon (e.g., <code>fn:</code>) to restrict the search to a given type.</p><p>Accepted types are: <code>fn</code>, <code>mod</code>, <code>struct</code>, <code>enum</code>, <code>trait</code>, <code>type</code>, <code>macro</code>, and <code>const</code>.</p><p>Search functions by type signature (e.g., <code>vec -> usize</code> or <code>* -> vec</code>)</p><p>Search multiple things at once by splitting your query with comma (e.g., <code>str,u8</code> or <code>String,struct:Vec,test</code>)</p></div></div></aside><script>window.rootPath = "../";window.currentCrate = "tlsf";</script><script src="../aliases.js"></script><script src="../main.js"></script><script defer src="../search-index.js"></script></body></html>
