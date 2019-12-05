@@ -114,33 +114,12 @@ impl FreeBlock {
     ///
     /// The first free block will have a *block* size of `n` bytes
     pub unsafe fn split(self, n: u16) -> (FreeBlock, FreeBlock) {
-        debug_assert_eq!(n % u16::from(consts::ALIGN_SIZE), 0);
+        debug_assert!(n >= u16::from(FreeBlockHeader::SIZE));
 
-        let total = self.size();
+        let block = Block::new_unchecked(self.header() as *mut _);
+        let (left, right) = block.split(n);
 
-        debug_assert!(total >= n + u16::from(FreeBlockHeader::SIZE));
-
-        let last_phys_block = self.is_last_phys_block();
-
-        let mut left = self;
-
-        // create the right ("remainder") block
-        let start = (left.header as *mut u8).add(usize::from(n));
-        let right = FreeBlock::from_parts(
-            start as *mut _,
-            total - n,
-            last_phys_block,
-            Some(left.offset()),
-        );
-
-        // update the original free block
-        if last_phys_block {
-            // `right` became the last physical block
-            left.set_last_phys_block_bit(false);
-        }
-        left.set_size(n);
-
-        (left, right)
+        (left.assume_free(), right)
     }
 
     pub fn should_split(&self, size: u16) -> bool {

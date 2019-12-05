@@ -436,18 +436,15 @@ impl Tlsf {
     /// regardless of the input and the state of the allocator -- the implementation of this method
     /// contains no loops, recursion or panicking branches.
     pub unsafe fn dealloc(&mut self, ptr: NonNull<u8>) {
-        let mut fb = Block::new_unchecked(
-            ptr.as_ptr().offset(-isize::from(BlockHeader::SIZE)) as *mut BlockHeader
-        )
-        .into_free();
+        let mut fb = Block::from_data_pointer(ptr.as_ptr()).into_free();
 
         // unlink
         fb.set_next_free(None);
         fb.set_prev_free(None);
 
         // merge
-        fb = self.merge_prev(fb);
-        fb = self.merge_next(fb);
+        fb = self.try_merge_prev(fb);
+        fb = self.try_merge_next(fb);
 
         self.add_to_free_list(fb);
     }
@@ -462,9 +459,7 @@ impl Tlsf {
     /// regardless of the input and the state of the allocator -- the implementation of this method
     /// contains no loops, recursion or panicking branches.
     pub unsafe fn grow_in_place(&mut self, ptr: NonNull<u8>, new_size: usize) -> Result<(), ()> {
-        let block = FreeBlock::new_unchecked(
-            ptr.as_ptr().offset(-isize::from(BlockHeader::SIZE)) as *mut _
-        );
+        let block = Block::from_data_pointer(ptr.as_ptr());
         let offset = block.offset();
         let usable_size = block.usable_size();
 
@@ -505,14 +500,19 @@ impl Tlsf {
     /// This method has a bounded execution time, meaning that it will complete within some time `T`
     /// regardless of the input and the state of the allocator -- the implementation of this method
     /// contains no loops, recursion or panicking branches.
-    pub unsafe fn shrink_in_place(
-        &mut self,
-        _ptr: NonNull<u8>,
-        _new_size: usize,
-    ) -> Result<(), ()> {
-        // TODO we should try to carve off a free block out of the excess space
-        // because we store the size in the block header shrinking a block can be a no-op
-        Ok(())
+    pub unsafe fn shrink_in_place(&mut self, ptr: NonNull<u8>, new_size: usize) {
+        let new_size = new_size as u16;
+        let block = Block::from_data_pointer(ptr.as_ptr());
+        let usable_size = block.usable_size();
+        let delta = usable_size - new_size;
+
+        if delta >= consts::SPLIT_THRESHOLD + u16::from(BlockHeader::SIZE) {
+            // chop off a new block at the end and try to merge it with its neighbor
+            let fb = block.split(new_size).1;
+            let fb = self.try_merge_next(fb);
+
+            self.add_to_free_list(fb);
+        }
     }
 
     /// Returns a pointer suitable for holding data described by a new layout with `layout`’s
@@ -538,9 +538,8 @@ impl Tlsf {
                 return Ok(ptr);
             }
         } else if new_size < old_size {
-            if self.shrink_in_place(ptr, new_size).is_ok() {
-                return Ok(ptr);
-            }
+            self.shrink_in_place(ptr, new_size);
+            return Ok(ptr);
         }
 
         // otherwise, fall back on alloc + copy + dealloc.
@@ -572,7 +571,7 @@ impl Tlsf {
         }
     }
 
-    fn merge_next(&mut self, mut unlinked: FreeBlock) -> FreeBlock {
+    fn try_merge_next(&mut self, mut unlinked: FreeBlock) -> FreeBlock {
         unsafe {
             debug_assert!(unlinked.next_free().is_none());
             debug_assert!(unlinked.prev_free().is_none());
@@ -606,7 +605,7 @@ impl Tlsf {
         }
     }
 
-    fn merge_prev(&mut self, unlinked: FreeBlock) -> FreeBlock {
+    fn try_merge_prev(&mut self, unlinked: FreeBlock) -> FreeBlock {
         unsafe {
             debug_assert!(unlinked.next_free().is_none());
             debug_assert!(unlinked.prev_free().is_none());

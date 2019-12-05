@@ -1,6 +1,6 @@
-use core::{mem, num::NonZeroI16, ops, ptr};
+use core::{convert::TryFrom, mem, num::NonZeroI16, ops, ptr};
 
-use crate::{consts, FreeBlock, Offset};
+use crate::{consts, free_block::FreeBlockHeader, FreeBlock, Offset};
 
 #[repr(C)]
 #[repr(align(4))]
@@ -83,7 +83,9 @@ impl BlockHeader {
     pub unsafe fn next_neighbor(&self) -> Block {
         debug_assert!(!self.is_last_phys_block());
 
-        Block::new_unchecked((self as *const _ as *const u8).add(usize::from(self.size())) as *mut _)
+        Block::new_unchecked(
+            (self as *const _ as *const u8).add(usize::from(self.size())) as *mut _,
+        )
     }
 
     pub fn prev_neighbor(&self) -> Option<Block> {
@@ -111,6 +113,22 @@ impl Block {
         Block::new_unchecked(header as *mut _)
     }
 
+    pub unsafe fn from_data_pointer(ptr: *mut u8) -> Self {
+        Block::new_unchecked(ptr.offset(-isize::from(BlockHeader::SIZE)) as *mut _)
+    }
+
+    pub fn offset(&self) -> Offset {
+        unsafe {
+            Offset::new(
+                i16::try_from(
+                    (self.header as isize - crate::anchor() as isize) >> consts::ALIGN_SIZE_LOG2,
+                )
+                .unwrap_or_else(|_| assume_unreachable!()),
+            )
+            .unwrap_or_else(|| assume_unreachable!())
+        }
+    }
+
     /* Getters */
     pub fn header(&self) -> *mut BlockHeader {
         self.header
@@ -122,6 +140,40 @@ impl Block {
             self.set_free_bit(true);
             FreeBlock::new_unchecked(self.header() as *mut _)
         }
+    }
+
+    /// Splits this free block in two free blocks
+    ///
+    /// The first free block will have a *block* size of `n` bytes
+    pub unsafe fn split(self, n: u16) -> (Self, FreeBlock) {
+        debug_assert_eq!(n % u16::from(consts::ALIGN_SIZE), 0);
+
+        let total = self.size();
+
+        debug_assert!(n >= u16::from(BlockHeader::SIZE));
+        debug_assert!(total >= n + u16::from(FreeBlockHeader::SIZE));
+
+        let last_phys_block = self.is_last_phys_block();
+
+        let mut left = self;
+
+        // create the right ("remainder") block
+        let start = (left.header as *mut u8).add(usize::from(n));
+        let right = FreeBlock::from_parts(
+            start as *mut _,
+            total - n,
+            last_phys_block,
+            Some(left.offset()),
+        );
+
+        // update the original free block
+        if last_phys_block {
+            // `right` became the last physical block
+            left.set_last_phys_block_bit(false);
+        }
+        left.set_size(n);
+
+        (left, right)
     }
 
     pub fn assume_free(self) -> FreeBlock {
