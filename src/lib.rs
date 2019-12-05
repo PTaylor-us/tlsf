@@ -468,7 +468,8 @@ impl Tlsf {
     /// regardless of the input and the state of the allocator -- the implementation of this method
     /// contains no loops, recursion or panicking branches.
     pub unsafe fn grow_in_place(&mut self, ptr: NonNull<u8>, new_size: usize) -> Result<(), ()> {
-        let block = Block::from_data_pointer(ptr);
+        let mut block = Block::from_data_pointer(ptr);
+        let orig_size = block.size();
         let offset = block.offset();
         let usable_size = block.usable_size();
 
@@ -480,7 +481,7 @@ impl Tlsf {
             let delta = (new_size - usize::from(usable_size)) as u16;
             let size = neighbor.size();
 
-            if neighbor.is_free() && size > delta + u16::from(FreeBlockHeader::SIZE) {
+            if neighbor.is_free() && size >= delta + u16::from(FreeBlockHeader::SIZE) {
                 // use neighbor to satisfy the request
                 let is_last_phys_block = neighbor.is_last_phys_block();
 
@@ -499,6 +500,9 @@ impl Tlsf {
                     FreeBlock::from_parts(header, size - delta, is_last_phys_block, Some(offset));
 
                 self.add_to_free_list(new_block);
+
+                // update original the size field of the original block
+                block.set_size(orig_size + delta);
 
                 Ok(())
             } else {
