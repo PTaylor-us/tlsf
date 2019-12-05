@@ -1,4 +1,4 @@
-use core::{convert::TryFrom, fmt, mem, ops};
+use core::{convert::TryFrom, fmt, mem, num::NonZeroI16, ops, ptr::NonNull};
 
 use crate::{
     block::{Block, BlockHeader},
@@ -51,32 +51,37 @@ impl ops::DerefMut for FreeBlockHeader {
 }
 
 #[repr(transparent)]
-pub struct FreeBlock {
-    header: *mut FreeBlockHeader,
+pub struct FreeBlock<'a> {
+    // NOTE for the rationale of this being a reference check the comment on the `struct Block` item
+    header: &'a mut FreeBlockHeader,
 }
 
-impl FreeBlock {
+impl<'a> FreeBlock<'a> {
     /* Constructors */
-    pub unsafe fn new_unchecked(header: *mut FreeBlockHeader) -> Self {
+    pub unsafe fn from_header(header: NonNull<FreeBlockHeader>) -> Self {
+        let header = header.as_ptr();
         debug_assert_eq!(header as usize % usize::from(consts::ALIGN_SIZE), 0);
 
-        FreeBlock { header }
+        FreeBlock {
+            header: &mut *header,
+        }
     }
 
     pub unsafe fn from_parts(
-        header: *mut FreeBlockHeader,
+        header: NonNull<FreeBlockHeader>,
         size: u16,
-        last_phys_block: bool,
+        is_last_phys_block: bool,
+        prev_phys_block: Option<NonZeroI16>,
     ) -> Self {
         // check size
         debug_assert_eq!(size % u16::from(consts::ALIGN_SIZE), 0);
         debug_assert!(size >= u16::from(FreeBlockHeader::SIZE));
 
-        let mut fb = FreeBlock::new_unchecked(header);
+        let mut fb = FreeBlock::from_header(header);
         fb.set_size(size);
         fb.set_free_bit(true);
-        fb.set_last_phys_block_bit(last_phys_block);
-        fb.set_prev_phys_block(None);
+        fb.set_last_phys_block_bit(is_last_phys_block);
+        fb.set_prev_phys_block(prev_phys_block);
         fb.set_next_free(None);
         fb.set_prev_free(None);
 
@@ -84,11 +89,16 @@ impl FreeBlock {
     }
 
     pub unsafe fn from_offset(offset: Offset) -> Self {
-        let header = crate::anchor().offset(isize::from(offset.get() << consts::ALIGN_SIZE_LOG2));
+        let header = NonNull::new_unchecked(
+            crate::anchor()
+                .as_ptr()
+                .offset(isize::from(offset.get() << consts::ALIGN_SIZE_LOG2)),
+        )
+        .cast();
 
-        debug_assert!(Block::new_unchecked(header as *mut _).is_free());
+        debug_assert!(Block::from_header(header.cast()).is_free());
 
-        FreeBlock::new_unchecked(header as *mut _)
+        FreeBlock::from_header(header)
     }
 
     /* Getters */
@@ -96,7 +106,8 @@ impl FreeBlock {
         unsafe {
             Offset::new(
                 i16::try_from(
-                    (self.header as isize - crate::anchor() as isize) >> consts::ALIGN_SIZE_LOG2,
+                    (self.header().as_ptr() as isize - crate::anchor().as_ptr() as isize)
+                        >> consts::ALIGN_SIZE_LOG2,
                 )
                 .unwrap_or_else(|_| assume_unreachable!()),
             )
@@ -104,40 +115,21 @@ impl FreeBlock {
         }
     }
 
-    pub fn header(&self) -> *mut FreeBlockHeader {
-        self.header
+    pub fn header(&self) -> NonNull<FreeBlockHeader> {
+        NonNull::from(&*self.header)
     }
 
     /* Miscellaneous */
     /// Splits this free block in two free blocks
     ///
     /// The first free block will have a *block* size of `n` bytes
-    pub unsafe fn split(self, n: u16) -> (FreeBlock, FreeBlock) {
-        debug_assert_eq!(n % u16::from(consts::ALIGN_SIZE), 0);
+    pub unsafe fn split(self, n: u16) -> (FreeBlock<'a>, FreeBlock<'a>) {
+        debug_assert!(n >= u16::from(FreeBlockHeader::SIZE));
 
-        let total = self.size();
+        let block = Block::from_header(self.header().cast());
+        let (left, right) = block.split(n);
 
-        debug_assert!(total >= n + u16::from(FreeBlockHeader::SIZE));
-
-        let last_phys_block = self.is_last_phys_block();
-
-        let mut left = self;
-
-        // create the right ("remainder") block
-        let start = (left.header as *mut u8).add(usize::from(n));
-        let mut right = FreeBlock::from_parts(start as *mut _, total - n, last_phys_block);
-        right.set_prev_phys_block(Some(left.offset()));
-        right.set_next_free(None);
-        right.set_prev_free(None);
-
-        // update the original free block
-        if last_phys_block {
-            // `right` became the last physical block
-            left.set_last_phys_block_bit(false);
-        }
-        left.set_size(n);
-
-        (left, right)
+        (left.assume_free(), right)
     }
 
     pub fn should_split(&self, size: u16) -> bool {
@@ -146,12 +138,19 @@ impl FreeBlock {
         self.usable_size() >= size + u16::from(BlockHeader::SIZE) + consts::SPLIT_THRESHOLD
     }
 
-    pub fn into_used(mut self) -> Block {
+    pub unsafe fn next_neighbor(&self) -> Block<'a> {
+        self._next_neighbor()
+    }
+
+    pub unsafe fn prev_neighbor(&self) -> Option<Block<'a>> {
+        self._prev_neighbor()
+    }
+
+    pub fn into_used(mut self) -> Block<'a> {
         unsafe {
             // Clear the `free` bit
-            self.volatile_set_free_bit(false);
-
-            Block::new_unchecked(self.header() as *mut _)
+            self.set_free_bit(false);
+            Block::from_header(self.header().cast())
         }
     }
 }
@@ -174,10 +173,10 @@ impl ufmt::uDebug for FreeBlock {
     }
 }
 
-impl fmt::Debug for FreeBlock {
+impl fmt::Debug for FreeBlock<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("FreeBlock")
-            .field("header", &self.header)
+            .field("header", &self.header())
             .field("offset", &self.offset())
             .field("size", &self.size())
             .field("last_phys_block", &self.is_last_phys_block())
@@ -188,16 +187,16 @@ impl fmt::Debug for FreeBlock {
     }
 }
 
-impl ops::Deref for FreeBlock {
+impl ops::Deref for FreeBlock<'_> {
     type Target = FreeBlockHeader;
 
     fn deref(&self) -> &FreeBlockHeader {
-        unsafe { &*self.header }
+        self.header
     }
 }
 
-impl ops::DerefMut for FreeBlock {
+impl ops::DerefMut for FreeBlock<'_> {
     fn deref_mut(&mut self) -> &mut FreeBlockHeader {
-        unsafe { &mut *self.header }
+        self.header
     }
 }
