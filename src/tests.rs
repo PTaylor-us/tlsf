@@ -9,6 +9,7 @@ struct Aligned<T>(T);
 
 #[test]
 fn alloc_reuse() {
+    #[link_section = ".bss.TLSF_ANCHOR"]
     static mut MEMORY: Aligned<[u8; N]> = Aligned([0; N]);
 
     unsafe {
@@ -41,6 +42,7 @@ fn alloc_reuse() {
 #[test]
 fn alignment() {
     // align to a 32-byte boundary
+    #[link_section = ".bss.TLSF_ANCHOR"]
     static mut MEMORY: A32<[u8; 2 * N]> = A32([0; 2 * N]);
 
     #[repr(align(8))]
@@ -74,6 +76,7 @@ fn alignment() {
 // small requests will be round up to a multiple of `ALIGN_SIZE`
 #[test]
 fn align_size() {
+    #[link_section = ".bss.TLSF_ANCHOR"]
     static mut MEMORY: Aligned<[u8; N]> = Aligned([0; N]);
 
     unsafe {
@@ -114,6 +117,7 @@ fn bits() {
 
 #[test]
 fn new() {
+    #[link_section = ".bss.TLSF_ANCHOR"]
     static mut MEMORY: Aligned<[u8; N]> = Aligned([0; N]);
 
     unsafe {
@@ -133,6 +137,7 @@ fn new() {
 
 #[test]
 fn new_unaligned() {
+    #[link_section = ".bss.TLSF_ANCHOR"]
     static mut MEMORY: Aligned<[u8; N]> = Aligned([0; N]);
 
     unsafe {
@@ -153,6 +158,7 @@ fn new_unaligned() {
 
 #[test]
 fn merge_both() {
+    #[link_section = ".bss.TLSF_ANCHOR"]
     static mut MEMORY: Aligned<[u8; N]> = Aligned([0; N]);
 
     unsafe {
@@ -195,6 +201,7 @@ fn merge_both() {
 
 #[test]
 fn merge_prev() {
+    #[link_section = ".bss.TLSF_ANCHOR"]
     static mut MEMORY: Aligned<[u8; N]> = Aligned([0; N]);
 
     unsafe {
@@ -225,6 +232,7 @@ fn merge_prev() {
 
 #[test]
 fn merge_next() {
+    #[link_section = ".bss.TLSF_ANCHOR"]
     static mut MEMORY: Aligned<[u8; N]> = Aligned([0; N]);
 
     unsafe {
@@ -267,6 +275,7 @@ fn oom() {
 
 #[test]
 fn two_phys_blocks() {
+    #[link_section = ".bss.TLSF_ANCHOR"]
     static mut MEMORY: Aligned<[u8; 2 * N]> = Aligned([0; 2 * N]);
 
     unsafe {
@@ -295,6 +304,7 @@ fn two_phys_blocks() {
 
 #[test]
 fn realloc() {
+    #[link_section = ".bss.TLSF_ANCHOR"]
     static mut MEMORY: Aligned<[u8; N]> = Aligned([0; N]);
 
     unsafe {
@@ -317,6 +327,7 @@ fn realloc() {
 #[test]
 fn grow_in_place() {
     const M: usize = 8;
+    #[link_section = ".bss.TLSF_ANCHOR"]
     static mut MEMORY: Aligned<[u8; N]> = Aligned([0; N]);
 
     unsafe {
@@ -339,6 +350,7 @@ fn grow_in_place() {
 #[test]
 fn shrink_in_place() {
     const M: usize = 8;
+    #[link_section = ".bss.TLSF_ANCHOR"]
     static mut MEMORY: Aligned<[u8; N]> = Aligned([0; N]);
 
     unsafe {
