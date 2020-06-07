@@ -72,7 +72,7 @@
 //!     static mut M: Aligned<[u8; MAX_BLOCK_SIZE as usize]> =
 //!         Aligned([0; MAX_BLOCK_SIZE as usize]);
 //!
-//!     ALLOC.lock().grow(&mut M.0);
+//!     ALLOC.lock().extend(&mut M.0);
 //!
 //!     // allocate a vector in allocator `A`
 //!     let mut xs: Vec<A, _> = Vec::new();
