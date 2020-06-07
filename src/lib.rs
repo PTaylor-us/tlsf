@@ -72,7 +72,7 @@
 //!     static mut M: Aligned<[u8; MAX_BLOCK_SIZE as usize]> =
 //!         Aligned([0; MAX_BLOCK_SIZE as usize]);
 //!
-//!     ALLOC.lock().grow(&mut M.0);
+//!     ALLOC.lock().extend(&mut M.0);
 //!
 //!     // allocate a vector in allocator `A`
 //!     let mut xs: Vec<A, _> = Vec::new();
@@ -133,12 +133,10 @@
 //!
 //! `MAX_BLOCK_SIZE` is the maximum size of any individual memory block managed by the allocator.
 //! This number is **not** the maximum amount of memory the allocator can manage but you should
-//! consider it when you use [`Tlsf.grow`] because the allocator will split the given slice into
+//! consider it when you use [`Tlsf::extend`] because the allocator will split the given slice into
 //! blocks of `MAX_BLOCK_SIZE` bytes if it's too big. These initial blocks -- they are more like
 //! regions -- will never be coalesced by the allocator; also, the allocator will *not* coalesce
 //! blocks from different regions even if they are next to each other.
-//!
-//! [`Tlsf.grow`]: struct.Tlsf.html#method.grow
 //!
 //! # Limitations
 //!
